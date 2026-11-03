@@ -19,7 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Changed the minimum Rust version to 1.89.
 
+- Changed `SmtpData` and `SmtpMessageSend` to prepare the message in one pass.
+
+  A message needing no rewrite is sent without a copy, up to 14 times faster.
+
 ### Fixed
+
+- Fixed bare CR and bare LF line endings reaching the server in `DATA` (RFC 5321 2.3.8).
+
+  `SmtpData` sends every line ending as CRLF and doubles the dot after a bare one too.
 
 - Fixed a reply never ending growing the client memory without limit.
 

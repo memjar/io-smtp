@@ -97,6 +97,7 @@ pub mod rfc7628;
 #[cfg(feature = "scram")]
 pub mod rfc7677;
 pub mod sasl;
+mod scan;
 pub mod send;
 pub mod session;
 pub(crate) mod utils;

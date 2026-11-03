@@ -1,5 +1,5 @@
 //! SMTP DATA coroutine; sends the message body terminated by
-//! `<CR><LF>.<CR><LF>` with dot-stuffing applied.
+//! `<CR><LF>.<CR><LF>`, every line ending as CRLF and dot-stuffing applied.
 //!
 //! # Example
 //!
@@ -48,7 +48,11 @@ use alloc::{
 use log::{debug, trace};
 use thiserror::Error;
 
-use crate::{coroutine::*, rfc5321::SmtpReplyCode, send::*, smtp_try};
+use crate::{coroutine::*, rfc5321::SmtpReplyCode, scan::position, send::*, smtp_try};
+
+const CR: u8 = b'\r';
+const LF: u8 = b'\n';
+const CRLF: &[u8] = b"\r\n";
 
 /// The DATA command (RFC 5321 §4.1.1.4).
 pub struct SmtpDataCommand;
@@ -100,8 +104,8 @@ pub struct SmtpData {
 }
 
 impl SmtpData {
-    /// `message` is the complete email (headers + body);
-    /// dot-stuffing and the terminator are appended internally.
+    /// `message` is the complete email (headers + body); line endings,
+    /// dot-stuffing and the terminator are taken care of internally.
     pub fn new(message: Vec<u8>) -> Self {
         Self {
             state: State::SendCommand(SmtpCommandSend::new(SmtpDataCommand)),
@@ -109,34 +113,65 @@ impl SmtpData {
         }
     }
 
-    /// Apply dot-stuffing to `message`, normalise line endings, and
-    /// append the `<CR><LF>.<CR><LF>` terminator.
+    /// Turns every bare CR and bare LF of `message` into CRLF, doubles the
+    /// dot starting a line, ends the last line, then appends the `.` line.
+    ///
+    /// `message` is reused as is when it needs none of the first two.
+    ///
+    /// Refs: <https://datatracker.ietf.org/doc/html/rfc5321#section-2.3.8>,
+    /// <https://datatracker.ietf.org/doc/html/rfc5321#section-4.5.2>
     fn prepare_body(message: Vec<u8>) -> Vec<u8> {
-        let mut result = Vec::with_capacity(message.len() + 5);
+        let mut out = Vec::new();
+        // NOTE: message[..copied] is in out already, once out is used.
+        let mut copied = 0;
+        let mut at = 0;
 
-        let mut at_line_start = true;
-        for &byte in &message {
-            if at_line_start && byte == b'.' {
-                result.push(b'.');
-            }
-            result.push(byte);
-            at_line_start = byte == b'\n';
+        if message.first() == Some(&b'.') {
+            out.push(b'.');
         }
 
-        if !result.ends_with(b"\r\n") {
-            if result.ends_with(b"\n") {
-                result.pop();
-                result.extend_from_slice(b"\r\n");
-            } else if result.ends_with(b"\r") {
-                result.push(b'\n');
-            } else {
-                result.extend_from_slice(b"\r\n");
+        while let Some(i) = position(&message[at..], |b| (b == CR) | (b == LF)) {
+            let i = at + i;
+
+            let (end, bare) = match message.get(i..i + 2) {
+                Some(CRLF) => (i + 2, false),
+                _ => (i + 1, true),
+            };
+
+            let dot = message.get(end) == Some(&b'.');
+
+            if bare || dot {
+                if out.is_empty() {
+                    out.reserve(message.len() + message.len() / 32 + 8);
+                }
+
+                out.extend_from_slice(&message[copied..i]);
+                out.extend_from_slice(CRLF);
+
+                if dot {
+                    out.push(b'.');
+                }
+
+                copied = end;
             }
+
+            at = end;
         }
 
-        result.extend_from_slice(b".\r\n");
+        let mut body = match out.is_empty() {
+            true => message,
+            false => {
+                out.extend_from_slice(&message[copied..]);
+                out
+            }
+        };
 
-        result
+        if !body.ends_with(CRLF) {
+            body.extend_from_slice(CRLF);
+        }
+
+        body.extend_from_slice(b".\r\n");
+        body
     }
 }
 
@@ -254,8 +289,79 @@ mod tests {
 
     #[test]
     fn dot_stuffs_leading_dot_lines() {
-        let body = SmtpData::prepare_body(b".hello\r\n".to_vec());
-        assert_eq!(body, b"..hello\r\n.\r\n");
+        let body = SmtpData::prepare_body(b".hello\r\n.\r\nx\r\n".to_vec());
+        assert_eq!(body, b"..hello\r\n..\r\nx\r\n.\r\n");
+    }
+
+    #[test]
+    fn turns_bare_line_endings_into_crlf() {
+        let body = SmtpData::prepare_body(b"a\nb\rc\r\nd".to_vec());
+        assert_eq!(body, b"a\r\nb\r\nc\r\nd\r\n.\r\n");
+    }
+
+    /// A bare CR or LF before a dot cannot end the data early on a server
+    /// reading bare line endings.
+    #[test]
+    fn dot_stuffs_after_bare_line_endings() {
+        let body = SmtpData::prepare_body(b"a\r.\r\nb\n.\nc".to_vec());
+        assert_eq!(body, b"a\r\n..\r\nb\r\n..\r\nc\r\n.\r\n");
+    }
+
+    #[test]
+    fn ends_an_empty_message() {
+        assert_eq!(SmtpData::prepare_body(Vec::new()), b"\r\n.\r\n");
+    }
+
+    #[test]
+    fn matches_a_byte_by_byte_rewrite() {
+        let alphabet = *b"a.\r\n";
+        let mut message = Vec::new();
+
+        for len in 0..=8u32 {
+            for mut n in 0..4usize.pow(len) {
+                message.clear();
+
+                for _ in 0..len {
+                    message.push(alphabet[n % 4]);
+                    n /= 4;
+                }
+
+                let expected = byte_by_byte(&message);
+                assert_eq!(SmtpData::prepare_body(message.clone()), expected);
+            }
+        }
+    }
+
+    /// The rewrite of RFC 5321 sections 2.3.8 and 4.5.2, one byte at a time.
+    fn byte_by_byte(message: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut line_start = true;
+        let mut bytes = message.iter().peekable();
+
+        while let Some(&byte) = bytes.next() {
+            if line_start && byte == b'.' {
+                out.push(b'.');
+            }
+
+            line_start = byte == b'\r' || byte == b'\n';
+
+            if line_start {
+                out.extend_from_slice(b"\r\n");
+
+                if byte == b'\r' && bytes.peek() == Some(&&b'\n') {
+                    bytes.next();
+                }
+            } else {
+                out.push(byte);
+            }
+        }
+
+        if !line_start || out.is_empty() {
+            out.extend_from_slice(b"\r\n");
+        }
+
+        out.extend_from_slice(b".\r\n");
+        out
     }
 
     #[test]

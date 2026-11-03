@@ -74,6 +74,7 @@ use crate::{
         mail::{SmtpMail, SmtpMailError},
         rcpt::{SmtpRcpt, SmtpRcptError},
     },
+    scan::position,
     smtp_try,
 };
 
@@ -139,7 +140,7 @@ impl SmtpMessageSend {
             rcpt_parameters: options.rcpt_parameters,
             message: Some(match options.keep_bcc {
                 true => message,
-                false => strip_bcc(&message),
+                false => strip_bcc(message),
             }),
         }
     }
@@ -201,15 +202,26 @@ impl fmt::Display for State {
 }
 
 /// Removes every `Bcc` field, folded lines included, from the header
-/// section of `message`, copying the body verbatim.
-fn strip_bcc(message: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(message.len());
-    let mut lines = message.split_inclusive(|&byte| byte == b'\n');
+/// section of `message`, leaving the body untouched.
+///
+/// `message` is returned as is when it carries no `Bcc` field.
+fn strip_bcc(message: Vec<u8>) -> Vec<u8> {
+    let mut out = Vec::new();
+    // NOTE: message[..copied] is in out already, once a field was stripped.
+    let mut copied = 0;
+    let mut stripped = false;
     let mut in_bcc = false;
+    let mut start = 0;
 
-    for line in lines.by_ref() {
+    while start < message.len() {
+        let end = match position(&message[start..], |byte| byte == b'\n') {
+            Some(lf) => start + lf + 1,
+            None => message.len(),
+        };
+
+        let line = &message[start..end];
+
         if line == b"\r\n" || line == b"\n" {
-            out.extend_from_slice(line);
             break;
         }
 
@@ -217,12 +229,24 @@ fn strip_bcc(message: &[u8]) -> Vec<u8> {
             in_bcc = is_bcc(line);
         }
 
-        if !in_bcc {
-            out.extend_from_slice(line);
+        if in_bcc {
+            if !stripped {
+                out.reserve(message.len());
+                stripped = true;
+            }
+
+            out.extend_from_slice(&message[copied..start]);
+            copied = end;
         }
+
+        start = end;
     }
 
-    lines.for_each(|line| out.extend_from_slice(line));
+    if !stripped {
+        return message;
+    }
+
+    out.extend_from_slice(&message[copied..]);
     out
 }
 
@@ -249,7 +273,7 @@ mod tests {
         let raw =
             b"From: a@x\r\nTo: b@x\r\nBcc: c@x\r\nSubject: s\r\n\r\nBcc: in the body stays\r\n";
         assert_eq!(
-            strip_bcc(raw),
+            strip_bcc(raw.to_vec()),
             b"From: a@x\r\nTo: b@x\r\nSubject: s\r\n\r\nBcc: in the body stays\r\n"
         );
     }
@@ -257,19 +281,25 @@ mod tests {
     #[test]
     fn removes_folded_continuation_lines_and_any_case() {
         let raw = b"From: a@x\r\nBCC: c@x,\r\n d@x,\r\n\te@x\r\nTo: b@x\r\n\r\nbody\r\n";
-        assert_eq!(strip_bcc(raw), b"From: a@x\r\nTo: b@x\r\n\r\nbody\r\n");
+        assert_eq!(
+            strip_bcc(raw.to_vec()),
+            b"From: a@x\r\nTo: b@x\r\n\r\nbody\r\n"
+        );
     }
 
     #[test]
     fn removes_the_obsolete_spelling_with_space_before_the_colon() {
         let raw = b"From: a@x\r\nBcc : c@x\r\nTo: b@x\r\n\r\nbody\r\n";
-        assert_eq!(strip_bcc(raw), b"From: a@x\r\nTo: b@x\r\n\r\nbody\r\n");
+        assert_eq!(
+            strip_bcc(raw.to_vec()),
+            b"From: a@x\r\nTo: b@x\r\n\r\nbody\r\n"
+        );
     }
 
     #[test]
     fn leaves_a_message_without_bcc_byte_identical() {
         let raw = b"From: a@x\nTo: b@x\nX-Bccish: keep\n\nbody\n";
-        assert_eq!(strip_bcc(raw), raw.to_vec());
+        assert_eq!(strip_bcc(raw.to_vec()), raw.to_vec());
     }
 
     #[test]
