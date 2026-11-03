@@ -152,7 +152,6 @@ mod tests {
     use alloc::vec::Vec;
 
     use crate::{
-        coroutine::*,
         rfc5321::{SmtpReversePath, mail::*},
         send::SmtpCommandSendError,
     };

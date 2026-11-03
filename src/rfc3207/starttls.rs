@@ -219,7 +219,7 @@ impl fmt::Display for State {
 mod tests {
     use alloc::vec::Vec;
 
-    use crate::{coroutine::*, rfc3207::starttls::*, send::SmtpCommandSendError};
+    use crate::{rfc3207::starttls::*, send::SmtpCommandSendError};
 
     #[test]
     fn success_returns_empty_remaining() {

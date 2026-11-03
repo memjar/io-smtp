@@ -192,10 +192,7 @@ impl fmt::Display for State {
 mod tests {
     use alloc::{borrow::Cow, vec::Vec};
 
-    use crate::{
-        coroutine::*,
-        rfc5321::{SmtpDomain, SmtpEhloDomain, ehlo::*},
-    };
+    use crate::rfc5321::{SmtpDomain, SmtpEhloDomain, ehlo::*};
 
     fn ehlo_domain() -> SmtpEhloDomain<'static> {
         SmtpEhloDomain::SmtpDomain(SmtpDomain(Cow::Borrowed("example.com")))

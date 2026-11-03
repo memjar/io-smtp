@@ -162,7 +162,6 @@ mod tests {
     use alloc::{borrow::Cow, vec::Vec};
 
     use crate::{
-        coroutine::*,
         rfc5321::{
             SmtpDomain, SmtpEhloDomain, SmtpForwardPath, SmtpLocalPart, SmtpMailbox, rcpt::*,
         },

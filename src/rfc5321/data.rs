@@ -205,7 +205,7 @@ impl fmt::Display for State {
 mod tests {
     use alloc::vec::Vec;
 
-    use crate::{coroutine::*, rfc5321::data::*, send::SmtpCommandSendError};
+    use crate::{rfc5321::data::*, send::SmtpCommandSendError};
 
     #[test]
     fn success_returns_ok() {

@@ -76,6 +76,7 @@ use alloc::{
     vec::Vec,
 };
 
+use base64_codec::codec::Base64Codec;
 use bounded_static::IntoBoundedStatic;
 use io_sasl::{
     coroutine::*,
@@ -294,10 +295,15 @@ impl SmtpCoroutine for SmtpAuthScramSha256 {
                         // empty reply leaves it with nothing to verify, which
                         // it refuses. This crate used to report that as a
                         // success.
-                        let text = strip_enhanced_status(&out.response.text().0);
+                        let text = strip_enhanced_status(&out.response.text().0).trim();
+                        let mut server_final = Vec::new();
 
-                        if let Ok(server_final) = parse_challenge(text)
-                            && !server_final.is_empty()
+                        // NOTE: the decoder skips blanks, so a text such as
+                        // `Authentication successful` decodes too: only one
+                        // token decoding to a server-final-message is one.
+                        if !text.contains(char::is_whitespace)
+                            && Base64Codec::default().decode_vec(text.as_bytes(), &mut server_final)
+                            && (server_final.starts_with(b"v=") || server_final.starts_with(b"e="))
                             && let Err(err) = self.resume_sasl(SaslArg::Input(&server_final))
                         {
                             return SmtpCoroutineState::Complete(Err(err));
@@ -374,14 +380,13 @@ fn strip_enhanced_status(text: &str) -> &str {
 mod tests {
     use alloc::{borrow::Cow, format, string::ToString, vec::Vec};
 
-    use base64::{Engine, engine::general_purpose::STANDARD as base64};
+    use base64_codec::codec::Base64Codec;
     use hmac::{Hmac, KeyInit, Mac};
     use io_sasl::rfc5801::SaslGs2ChannelBinding;
     use secrecy::SecretString;
     use sha2::Sha256;
 
     use crate::{
-        coroutine::*,
         rfc5321::{SmtpDomain, SmtpEhloDomain},
         rfc7677::auth_scram_sha_256::*,
         send::SmtpCommandSendError,
@@ -419,29 +424,38 @@ mod tests {
 
     #[test]
     fn success_with_server_final_in_a_challenge_returns_ok() {
-        let mut auth = auth(SmtpAuthScramSha256Options::default());
+        let replies: [&[u8]; 3] = [
+            b"235 2.7.0 Authentication successful\r\n",
+            b"235 2.7.0 Accepted\r\n",
+            b"235 Ok\r\n",
+        ];
 
-        let bytes = expect_wants_write(&mut auth, None);
-        let client_first = decode_last_base64_token(&bytes);
+        for reply in replies {
+            let mut auth = auth(SmtpAuthScramSha256Options::default());
 
-        expect_wants_read(&mut auth);
+            let bytes = expect_wants_write(&mut auth, None);
+            let client_first = decode_last_base64_token(&bytes);
 
-        let server_first = server_first(&client_first);
-        let challenge = format!("334 {}\r\n", base64.encode(&server_first));
-        let bytes = expect_wants_write(&mut auth, Some(challenge.as_bytes()));
-        let client_final = decode_last_base64_token(&bytes);
+            expect_wants_read(&mut auth);
 
-        expect_wants_read(&mut auth);
+            let server_first = server_first(&client_first);
+            let challenge = format!("334 {}\r\n", encode(&server_first));
+            let bytes = expect_wants_write(&mut auth, Some(challenge.as_bytes()));
+            let client_final = decode_last_base64_token(&bytes);
 
-        // NOTE: the server proves itself in a last challenge, which the
-        // client answers with an empty response before the success reply.
-        let server_final = server_final(&client_first, &server_first, &client_final);
-        let challenge = format!("334 {}\r\n", base64.encode(&server_final));
-        let ack = expect_wants_write(&mut auth, Some(challenge.as_bytes()));
-        assert_eq!(ack, b"\r\n");
+            expect_wants_read(&mut auth);
 
-        expect_wants_read(&mut auth);
-        expect_complete_ok(&mut auth, b"235 2.7.0 Authentication successful\r\n");
+            // NOTE: the server proves itself in a last challenge, which the
+            // client answers with an empty response before the success
+            // reply, whose text decodes as base64 or not.
+            let server_final = server_final(&client_first, &server_first, &client_final);
+            let challenge = format!("334 {}\r\n", encode(&server_final));
+            let ack = expect_wants_write(&mut auth, Some(challenge.as_bytes()));
+            assert_eq!(ack, b"\r\n");
+
+            expect_wants_read(&mut auth);
+            expect_complete_ok(&mut auth, reply);
+        }
     }
 
     #[test]
@@ -454,7 +468,7 @@ mod tests {
         expect_wants_read(&mut auth);
 
         let server_first = server_first(&client_first);
-        let challenge = format!("334 {}\r\n", base64.encode(&server_first));
+        let challenge = format!("334 {}\r\n", encode(&server_first));
         let bytes = expect_wants_write(&mut auth, Some(challenge.as_bytes()));
         let client_final = decode_last_base64_token(&bytes);
 
@@ -463,7 +477,7 @@ mod tests {
         // NOTE: RFC 4954 section 4 also lets the server prove itself in the
         // success reply, behind its enhanced status code.
         let server_final = server_final(&client_first, &server_first, &client_final);
-        let reply = format!("235 2.7.0 {}\r\n", base64.encode(&server_final));
+        let reply = format!("235 2.7.0 {}\r\n", encode(&server_final));
         expect_complete_ok(&mut auth, reply.as_bytes());
     }
 
@@ -476,7 +490,7 @@ mod tests {
 
         expect_wants_read(&mut auth);
 
-        let challenge = format!("334 {}\r\n", base64.encode(server_first(&client_first)));
+        let challenge = format!("334 {}\r\n", encode(server_first(&client_first)));
         let _client_final = expect_wants_write(&mut auth, Some(challenge.as_bytes()));
 
         expect_wants_read(&mut auth);
@@ -501,13 +515,13 @@ mod tests {
 
         expect_wants_read(&mut auth);
 
-        let challenge = format!("334 {}\r\n", base64.encode(server_first(&client_first)));
+        let challenge = format!("334 {}\r\n", encode(server_first(&client_first)));
         let _client_final = expect_wants_write(&mut auth, Some(challenge.as_bytes()));
 
         expect_wants_read(&mut auth);
 
-        let forged = format!("v={}", base64.encode("not the signature"));
-        let reply = format!("235 2.7.0 {}\r\n", base64.encode(&forged));
+        let forged = format!("v={}", encode("not the signature"));
+        let reply = format!("235 2.7.0 {}\r\n", encode(&forged));
         let err = expect_complete_err(&mut auth, reply.as_bytes());
         let SmtpAuthScramSha256Error::Mechanism(SaslScramError::ServerSignatureMismatch) = err
         else {
@@ -549,7 +563,7 @@ mod tests {
 
         expect_wants_read(&mut auth);
 
-        let challenge = format!("334 {}\r\n", base64.encode(server_first(&client_first)));
+        let challenge = format!("334 {}\r\n", encode(server_first(&client_first)));
         let _client_final = expect_wants_write(&mut auth, Some(challenge.as_bytes()));
 
         expect_wants_read(&mut auth);
@@ -598,7 +612,7 @@ mod tests {
             .0;
         let auth_message =
             format!("{client_first_bare},{server_first},{client_final_without_proof}");
-        let salt = base64.decode(SALT_B64).expect("valid salt");
+        let salt = decode(SALT_B64);
 
         // NOTE: SaltedPassword = PBKDF2(SHA-256, password, salt, iterations).
         let mut salted_password = [0u8; 32];
@@ -614,7 +628,19 @@ mod tests {
         mac.update(auth_message.as_bytes());
         let server_signature = mac.finalize().into_bytes();
 
-        format!("v={}", base64.encode(server_signature))
+        format!("v={}", encode(server_signature))
+    }
+
+    fn encode(bytes: impl AsRef<[u8]>) -> String {
+        let mut encoded = Vec::new();
+        Base64Codec::default().encode_vec(bytes.as_ref(), &mut encoded);
+        String::from_utf8(encoded).expect("ascii base64")
+    }
+
+    fn decode(text: &str) -> Vec<u8> {
+        let mut decoded = Vec::new();
+        assert!(Base64Codec::default().decode_vec(text.as_bytes(), &mut decoded));
+        decoded
     }
 
     fn decode_last_base64_token(line: &[u8]) -> String {
@@ -624,7 +650,7 @@ mod tests {
             .rsplit_terminator(char::is_whitespace)
             .next()
             .expect("token");
-        let bytes = base64.decode(token).expect("valid base64");
+        let bytes = decode(token);
 
         String::from_utf8(bytes).expect("valid utf8")
     }

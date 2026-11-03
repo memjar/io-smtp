@@ -714,7 +714,7 @@ name = "io-smtp"
 version = "0.6.0"
 dependencies = [
  "anyhow",
- "base64",
+ "base64-codec",
  "bounded-static",
  "bounded-static-derive",
  "chumsky",

@@ -67,7 +67,7 @@ url = "2"
 
 [dependencies]
 anyhow = { version = "1", optional = true }
-base64 = { version = "0.23", default-features = false, features = ["alloc"] }
+base64-codec = { version = "0.1", default-features = false, features = ["alloc"] }
 bounded-static = { version = "0.8", default-features = false, features = ["alloc"] }
 bounded-static-derive = { version = "0.8", default-features = false }
 chumsky = { version = "0.13", default-features = false }

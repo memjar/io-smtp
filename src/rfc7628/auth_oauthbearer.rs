@@ -403,7 +403,6 @@ mod tests {
     use secrecy::SecretString;
 
     use crate::{
-        coroutine::*,
         rfc5321::{SmtpDomain, SmtpEhloDomain},
         rfc7628::auth_oauthbearer::*,
         send::SmtpCommandSendError,
@@ -518,9 +517,10 @@ mod tests {
     }
 
     fn base64_decode(input: &str) -> String {
-        use base64::{Engine, engine::general_purpose::STANDARD as base64};
+        use base64_codec::codec::Base64Codec;
 
-        let bytes = base64.decode(input).expect("base64 payload");
+        let mut bytes = Vec::new();
+        assert!(Base64Codec::default().decode_vec(input.as_bytes(), &mut bytes));
         String::from_utf8_lossy(&bytes).into_owned()
     }
 

@@ -357,7 +357,6 @@ mod tests {
     use alloc::{borrow::Cow, vec::Vec};
 
     use crate::{
-        coroutine::*,
         rfc5321::{SmtpDomain, SmtpEhloDomain},
         sasl::auth_anonymous::*,
         send::SmtpCommandSendError,

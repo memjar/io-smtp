@@ -157,7 +157,7 @@ impl fmt::Display for State {
 
 #[cfg(test)]
 mod tests {
-    use crate::{coroutine::*, rfc5321::greeting::*};
+    use crate::rfc5321::greeting::*;
 
     #[test]
     fn single_line_success_returns_ok() {

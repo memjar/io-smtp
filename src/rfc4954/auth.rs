@@ -2,7 +2,7 @@
 
 use alloc::{borrow::Cow, vec::Vec};
 
-use base64::{Engine, engine::general_purpose::STANDARD as base64};
+use base64_codec::codec::Base64Codec;
 use secrecy::{ExposeSecret, SecretBox};
 
 /// The AUTH command (RFC 4954 §4).
@@ -29,7 +29,7 @@ impl<'a> From<SmtpAuthCommand<'a>> for Vec<u8> {
                 buf.extend_from_slice(b" =");
             } else {
                 buf.push(b' ');
-                buf.extend_from_slice(base64.encode(data).as_bytes());
+                Base64Codec::default().encode_vec(data, &mut buf);
             }
         }
 

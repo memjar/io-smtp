@@ -391,7 +391,6 @@ mod tests {
     use secrecy::SecretString;
 
     use crate::{
-        coroutine::*,
         rfc5321::{SmtpDomain, SmtpEhloDomain},
         sasl::auth_xoauth2::*,
         send::SmtpCommandSendError,

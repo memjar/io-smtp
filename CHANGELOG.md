@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING**: Replaced the base64 crate with [base64-codec](https://crates.io/crates/base64-codec) for the `AUTH` payloads.
+
+  `SmtpAuthDataError::Base64` and `SmtpAuthChallengeError::Base64` carry no base64 crate error any more. Payloads decode leniently: a missing padding, non-zero trailing bits and blanks are accepted, any other byte outside the alphabet refused.
+
+- Changed the minimum Rust version to 1.89.
+
+### Fixed
+
+- Fixed a one-word SCRAM-SHA-256 success reply, such as `235 2.7.0 Accepted`, failing a verified exchange with `UnexpectedChallenge`.
+
 ## [0.6.0] - 2026-10-09
 
 ### Added

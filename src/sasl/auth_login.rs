@@ -328,7 +328,6 @@ mod tests {
     use secrecy::SecretString;
 
     use crate::{
-        coroutine::*,
         rfc5321::{SmtpDomain, SmtpEhloDomain},
         sasl::auth_login::*,
         send::SmtpCommandSendError,
@@ -440,8 +439,8 @@ mod tests {
         let _ = expect_wants_write(&mut auth, Some(b"334 VXNlcm5hbWU6\r\n"));
         expect_wants_read(&mut auth);
 
-        let err = expect_complete_err(&mut auth, b"334 not base64 at all\r\n");
-        let SmtpAuthLoginError::Challenge(SmtpAuthChallengeError::Base64(_)) = err else {
+        let err = expect_complete_err(&mut auth, b"334 not!base64\r\n");
+        let SmtpAuthLoginError::Challenge(SmtpAuthChallengeError::Base64) = err else {
             panic!("expected SmtpAuthLoginError::Challenge, got {err:?}");
         };
     }

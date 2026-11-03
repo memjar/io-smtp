@@ -239,7 +239,6 @@ mod tests {
     use alloc::{vec, vec::Vec};
 
     use crate::{
-        coroutine::*,
         message::*,
         rfc3461::parameter::{SmtpDsnNotify, SmtpDsnRet},
         rfc5321::{SmtpDomain, SmtpEhloDomain, SmtpLocalPart, SmtpMailbox},

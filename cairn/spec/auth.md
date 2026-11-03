@@ -37,3 +37,14 @@ An ignored live test against Exchange Online SHALL connect with a token the serv
 ## Requirement: The XOAUTH2 error challenge is verified live
 
 An ignored live test against Gmail SHALL connect with a token the server refuses, for an address no account holds, and expect the failure to carry the JSON from the server's error challenge, so the challenge and the empty answer it wants are exercised against a real server. Exchange Online refuses without a challenge and cannot reach that branch.
+
+## Requirement: AUTH payloads decode leniently
+
+Challenges and continuation lines SHALL decode leniently, accepting a missing padding, non-zero trailing bits and blanks, and SHALL fail with the `Base64` variant of their error on any other byte outside the alphabet or on data after the padding.
+
+The text of a SCRAM-SHA-256 success reply SHALL be read as the server-final-message only when, past its enhanced status code, it is one blank-free token decoding to a message starting with `v=` or `e=`. Any other text, such as `Authentication successful` or `Accepted`, is human text and leaves the mechanism to refuse the unverified exchange or to complete the verified one.
+
+### Scenario: A one-word success text after a verified exchange
+- GIVEN a SCRAM-SHA-256 exchange whose server-final-message came in a 334 challenge
+- WHEN the server replies `235 2.7.0 Accepted`
+- THEN the exchange completes `Ok`, the text never reaching the mechanism
