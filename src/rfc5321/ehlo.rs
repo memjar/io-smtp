@@ -59,6 +59,7 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     rfc5321::{SmtpEhloDomain, SmtpEhloResponse},
+    send::SMTP_MAX_REPLY_LEN,
     utils::{escape_byte_string, parsers::format_rich_errors},
 };
 
@@ -83,6 +84,9 @@ pub enum SmtpEhloError {
     /// The stream reached EOF before a complete reply arrived.
     #[error("SMTP EHLO failed: reached unexpected EOF on stream")]
     Eof,
+    /// The reply grew past the given limit before it completed.
+    #[error("SMTP EHLO failed: reply exceeds {0} bytes")]
+    TooLarge(usize),
     /// The reply could not be parsed as an EHLO response.
     #[error("SMTP EHLO failed: parse error: {0}")]
     ParseResponse(String),
@@ -139,6 +143,11 @@ impl SmtpCoroutine for SmtpEhlo {
                     Some(data) => {
                         trace!("read bytes: {}", escape_byte_string(data));
                         self.buf.extend_from_slice(data);
+
+                        if self.buf.len() > SMTP_MAX_REPLY_LEN {
+                            let err = SmtpEhloError::TooLarge(SMTP_MAX_REPLY_LEN);
+                            return SmtpCoroutineState::Complete(Err(err));
+                        }
 
                         if !SmtpEhloResponse::is_complete(&self.buf) {
                             self.wants_read = true;
@@ -221,6 +230,27 @@ mod tests {
         assert_eq!(caps.len(), 2);
         assert!(caps.iter().any(|c| c.as_ref() == "AUTH PLAIN LOGIN"));
         assert!(caps.iter().any(|c| c.as_ref() == "SIZE 10485760"));
+    }
+
+    #[test]
+    fn endless_response_returns_too_large() {
+        let mut ehlo = SmtpEhlo::new(ehlo_domain());
+        let _ = expect_wants_write(&mut ehlo, None);
+        let line = [b"250-".as_slice(), &[b'x'; 1018], b"\r\n"].concat();
+        let mut arg = None;
+
+        let err = (0..100)
+            .find_map(|_| match ehlo.resume(arg.take()) {
+                SmtpCoroutineState::Yielded(SmtpYield::WantsRead) => {
+                    arg = Some(line.as_slice());
+                    None
+                }
+                SmtpCoroutineState::Complete(Err(err)) => Some(err),
+                state => panic!("expected WantsRead or Complete(Err), got {state:?}"),
+            })
+            .expect("the reply never hit the limit");
+
+        assert!(matches!(err, SmtpEhloError::TooLarge(SMTP_MAX_REPLY_LEN)));
     }
 
     #[test]

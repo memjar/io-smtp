@@ -140,6 +140,13 @@ impl SmtpCoroutine for SmtpStartTls {
                         trace!("read bytes: {}", escape_byte_string(data));
                         self.buf.extend_from_slice(data);
 
+                        if self.buf.len() > SMTP_MAX_REPLY_LEN {
+                            let err = SmtpStartTlsError::Send(SmtpCommandSendError::TooLarge(
+                                SMTP_MAX_REPLY_LEN,
+                            ));
+                            return SmtpCoroutineState::Complete(Err(err));
+                        }
+
                         let Some(end) = reply_end(&self.buf) else {
                             self.wants_read = true;
                             continue;
@@ -255,6 +262,30 @@ mod tests {
         // session; the caller must refuse the upgrade.
         let remaining = expect_complete_ok(&mut starttls, b"220 ready\r\nRSET\r\n");
         assert_eq!(remaining, b"RSET\r\n");
+    }
+
+    #[test]
+    fn endless_reply_returns_too_large() {
+        let mut starttls = SmtpStartTls::new();
+        let _ = expect_wants_write(&mut starttls, None);
+        let line = [b"220-".as_slice(), &[b'x'; 1018], b"\r\n"].concat();
+        let mut arg = None;
+
+        let err = (0..100)
+            .find_map(|_| match starttls.resume(arg.take()) {
+                SmtpCoroutineState::Yielded(SmtpYield::WantsRead) => {
+                    arg = Some(line.as_slice());
+                    None
+                }
+                SmtpCoroutineState::Complete(Err(err)) => Some(err),
+                state => panic!("expected WantsRead or Complete(Err), got {state:?}"),
+            })
+            .expect("the reply never hit the limit");
+
+        assert!(matches!(
+            err,
+            SmtpStartTlsError::Send(SmtpCommandSendError::TooLarge(SMTP_MAX_REPLY_LEN))
+        ));
     }
 
     #[test]

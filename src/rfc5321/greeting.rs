@@ -50,6 +50,7 @@ use thiserror::Error;
 use crate::{
     coroutine::*,
     rfc5321::SmtpGreeting,
+    send::SMTP_MAX_REPLY_LEN,
     utils::{escape_byte_string, parsers::format_rich_errors},
 };
 
@@ -59,6 +60,9 @@ pub enum SmtpGreetingGetError {
     /// The stream reached EOF before a complete greeting arrived.
     #[error("SMTP greeting failed: reached unexpected EOF on stream")]
     Eof,
+    /// The greeting grew past the given limit before it completed.
+    #[error("SMTP greeting failed: greeting exceeds {0} bytes")]
+    TooLarge(usize),
     /// The banner could not be parsed as an SMTP greeting.
     #[error("SMTP greeting failed: parse error: {0}")]
     ParseResponse(String),
@@ -106,6 +110,11 @@ impl SmtpCoroutine for SmtpGreetingGet {
                     Some(data) => {
                         trace!("read bytes: {}", escape_byte_string(data));
                         self.buf.extend_from_slice(data);
+
+                        if self.buf.len() > SMTP_MAX_REPLY_LEN {
+                            let err = SmtpGreetingGetError::TooLarge(SMTP_MAX_REPLY_LEN);
+                            return SmtpCoroutineState::Complete(Err(err));
+                        }
 
                         if !SmtpGreeting::is_complete(&self.buf) {
                             self.wants_read = true;
@@ -176,6 +185,29 @@ mod tests {
         let reply = b"220-server.example.com hello\r\n220-extra info\r\n220 ready\r\n";
         let g = expect_complete_ok(&mut greeting, reply);
         assert_eq!(g.domain.0.as_ref(), "server.example.com");
+    }
+
+    #[test]
+    fn endless_greeting_returns_too_large() {
+        let mut greeting = SmtpGreetingGet::new();
+        let line = [b"220-".as_slice(), &[b'x'; 1018], b"\r\n"].concat();
+        let mut arg = None;
+
+        let err = (0..100)
+            .find_map(|_| match greeting.resume(arg.take()) {
+                SmtpCoroutineState::Yielded(SmtpYield::WantsRead) => {
+                    arg = Some(line.as_slice());
+                    None
+                }
+                SmtpCoroutineState::Complete(Err(err)) => Some(err),
+                state => panic!("expected WantsRead or Complete(Err), got {state:?}"),
+            })
+            .expect("the reply never hit the limit");
+
+        assert!(matches!(
+            err,
+            SmtpGreetingGetError::TooLarge(SMTP_MAX_REPLY_LEN)
+        ));
     }
 
     #[test]

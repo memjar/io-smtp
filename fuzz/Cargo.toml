@@ -1,0 +1,25 @@
+[package]
+name = "io-smtp-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+arbitrary = { version = "1", features = ["derive"] }
+io-sasl = { version = "0.1", default-features = false, features = ["scram"] }
+io-smtp = { path = "..", default-features = false, features = ["scram"] }
+libfuzzer-sys = "0.4"
+secrecy = "0.10"
+
+[[bin]]
+name = "reply"
+path = "fuzz_targets/reply.rs"
+test = false
+doc = false
+bench = false
+
+# Detach from the parent package so `cargo fuzz` builds this crate standalone.
+[workspace]

@@ -29,3 +29,7 @@ cargo build --release                                # full client (default TLS 
 ## Provider tests
 
 The tests folder ships ignored end-to-end tests against real servers: fastmail and gmail read credentials from environment variables (documented in each file's header), stalwart expects a local instance started with tests/stalwart.sh. Run one with cargo test --test followed by its name and -- --ignored.
+
+## Fuzzing
+
+The fuzz folder holds a cargo-fuzz target over the reply parsers and the coroutines reading them; [fuzz/README.md](./fuzz/README.md) has the oracle and the command, run through the `fuzz` devShell of the flake.

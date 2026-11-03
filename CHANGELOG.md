@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added a `reply` fuzz target over the reply parsers and the coroutines reading them.
+
 ### Changed
 
 - **BREAKING**: Replaced the base64 crate with [base64-codec](https://crates.io/crates/base64-codec) for the `AUTH` payloads.
@@ -16,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Changed the minimum Rust version to 1.89.
 
 ### Fixed
+
+- Fixed a reply never ending growing the client memory without limit.
+
+  The greeting, `EHLO`, `STARTTLS` and command coroutines fail with `TooLarge` past `SMTP_MAX_REPLY_LEN`, 64 KiB. **BREAKING**: `SmtpCommandSendError`, `SmtpEhloError` and `SmtpGreetingGetError` gained the `TooLarge` variant.
 
 - Fixed a one-word SCRAM-SHA-256 success reply, such as `235 2.7.0 Accepted`, failing a verified exchange with `UnexpectedChallenge`.
 

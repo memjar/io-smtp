@@ -16,18 +16,31 @@ use crate::{
     utils::{escape_byte_string, parsers::format_rich_errors},
 };
 
+/// Maximum size in bytes of a reply, all its lines included: 64 KiB.
+///
+/// A reply line holds 512 bytes at most (RFC 5321 §4.5.3.1.5), so this
+/// leaves room for the longest EHLO response while a server never ending
+/// its reply cannot exhaust memory.
+///
+/// Refs: <https://datatracker.ietf.org/doc/html/rfc5321#section-4.5.3.1.5>
+pub const SMTP_MAX_REPLY_LEN: usize = 64 * 1024;
+
 /// Failure causes raised by [`SmtpCommandSend`].
 #[derive(Clone, Debug, Error)]
 pub enum SmtpCommandSendError {
     /// The stream reached EOF before a complete reply arrived.
     #[error("Reached unexpected EOF on SMTP stream")]
     Eof,
+    /// The reply grew past the given limit before it completed.
+    #[error("SMTP reply exceeds {0} bytes")]
+    TooLarge(usize),
     /// The reply could not be parsed as an SMTP response.
     #[error("Parse SMTP response error: {0}")]
     ParseResponse(String),
 }
 
 /// Successful step output emitted on [`SmtpCommandSend`] completion.
+#[derive(Debug)]
 pub struct SmtpCommandSendOk {
     /// The parsed reply (possibly multi-line).
     pub response: SmtpResponse<'static>,
@@ -98,6 +111,11 @@ impl<Cmd> SmtpCoroutine for SmtpCommandSend<Cmd> {
                         trace!("read bytes: {}", escape_byte_string(data));
                         self.buf.extend_from_slice(data);
 
+                        if self.buf.len() > SMTP_MAX_REPLY_LEN {
+                            let err = SmtpCommandSendError::TooLarge(SMTP_MAX_REPLY_LEN);
+                            return SmtpCoroutineState::Complete(Err(err));
+                        }
+
                         if !SmtpResponse::is_complete(&self.buf) {
                             self.wants_read = true;
                             continue;
@@ -128,5 +146,38 @@ impl<Cmd> SmtpCoroutine for SmtpCommandSend<Cmd> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::send::*;
+
+    #[test]
+    fn endless_reply_returns_too_large() {
+        let mut send = SmtpCommandSend::new(b"NOOP\r\n".to_vec());
+        let line = [b"250-".as_slice(), &[b'x'; 1018], b"\r\n"].concat();
+
+        let SmtpCoroutineState::Yielded(SmtpYield::WantsWrite(_)) = send.resume(None) else {
+            panic!("expected WantsWrite");
+        };
+
+        let mut arg = None;
+
+        let err = (0..100)
+            .find_map(|_| match send.resume(arg.take()) {
+                SmtpCoroutineState::Yielded(SmtpYield::WantsRead) => {
+                    arg = Some(line.as_slice());
+                    None
+                }
+                SmtpCoroutineState::Complete(Err(err)) => Some(err),
+                state => panic!("expected WantsRead or Complete(Err), got {state:?}"),
+            })
+            .expect("the reply never hit the limit");
+
+        assert!(matches!(
+            err,
+            SmtpCommandSendError::TooLarge(SMTP_MAX_REPLY_LEN)
+        ));
     }
 }
