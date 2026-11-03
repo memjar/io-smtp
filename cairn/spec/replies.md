@@ -20,3 +20,16 @@ The coroutines reading a reply (the greeting, `EHLO`, `STARTTLS` and every comma
 ## Requirement: Replies are fuzzed
 
 A `reply` fuzz target SHALL feed arbitrary reads followed by EOF to the reading coroutines and to the LOGIN and SCRAM-SHA-256 exchanges, and the first read to the reply, greeting, EHLO and challenge parsers, asserting no panic, no read asked for after EOF more than twice, and no `TooLarge` before the limit was passed.
+
+## Requirement: A last line may be the code alone
+
+The reply, greeting and `EHLO` parsers and their completeness checks SHALL take a last line of the code alone, with or without its space, as the end of the reply (RFC 5321 4.2.1), its text being empty.
+
+### Scenario: A bare code
+- GIVEN a server answering `250-First line\r\n250\r\n`
+- WHEN the reply is read
+- THEN it completes with code 250 and an empty last line
+
+## Requirement: Any reply text is acceptable
+
+Reply text SHALL accept HT, every byte from 0x20 but DEL, decoded as UTF-8 with replacement characters for invalid sequences (RFC 5321 4.2), so a server answering in UTF-8 still yields its code.

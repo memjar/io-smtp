@@ -80,6 +80,32 @@ fn response_parse_single_line_no_text() {
     assert_eq!(r.code, SmtpReplyCode::OK);
 }
 
+/// Clients must accept the code alone, without its space (RFC 5321
+/// 4.2.1).
+#[test]
+fn response_bare_code() {
+    for buf in [b"250\r\n".as_slice(), b"250-First line\r\n250\r\n"] {
+        assert!(SmtpResponse::is_complete(buf));
+
+        let r = SmtpResponse::parse(buf).unwrap();
+        assert_eq!(r.code, SmtpReplyCode::OK);
+        assert_eq!(r.lines.as_ref().last().unwrap().as_ref(), "");
+    }
+
+    assert!(!SmtpResponse::is_complete(b"250-First line\r\n250"));
+}
+
+/// Any text must be acceptable (RFC 5321 4.2), UTF-8 included.
+#[test]
+fn response_parse_non_ascii_text() {
+    let r = SmtpResponse::parse("550 5.7.1 Größe überschritten\r\n".as_bytes()).unwrap();
+    assert_eq!(r.code.code(), 550);
+    assert_eq!(r.text().as_ref(), "5.7.1 Größe überschritten");
+
+    let r = SmtpResponse::parse(b"550 caf\xe9\r\n").unwrap();
+    assert_eq!(r.text().as_ref(), "caf\u{fffd}");
+}
+
 #[test]
 fn response_parse_multiline() {
     let buf = b"250-First line\r\n250-Second line\r\n250 Final line\r\n";
@@ -159,6 +185,24 @@ fn greeting_parse_multiline_no_continuation_text() {
     let g = SmtpGreeting::parse(buf).unwrap();
     assert_eq!(g.domain.as_ref(), "smtp.example.com");
     assert!(g.text.is_none());
+}
+
+#[test]
+fn greeting_parse_multiline_bare_last_code() {
+    let buf = b"220-smtp.example.com ESMTP\r\n220\r\n";
+    assert!(SmtpGreeting::is_complete(buf));
+
+    let g = SmtpGreeting::parse(buf).unwrap();
+    assert_eq!(g.domain.as_ref(), "smtp.example.com");
+}
+
+#[test]
+fn ehlo_response_bare_last_code() {
+    let buf = b"250-smtp.example.com\r\n250-PIPELINING\r\n250\r\n";
+    assert!(SmtpEhloResponse::is_complete(buf));
+
+    let r = SmtpEhloResponse::parse(buf).unwrap();
+    assert_eq!(r.capabilities, ["PIPELINING"]);
 }
 
 // NOTE: Domain tests below.

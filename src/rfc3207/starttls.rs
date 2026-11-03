@@ -186,11 +186,11 @@ impl SmtpCoroutine for SmtpStartTls {
 
 /// Finds where the first complete reply ends in `buf`.
 ///
-/// A reply ends at the first line whose fourth byte is a space (RFC 5321
-/// §4.2.1); a hyphen there continues it. Returns the index just past
-/// that line's CRLF, or [`None`] while the reply is still incomplete.
-/// Anything past that index arrived early and, for STARTTLS, arrived
-/// from an attacker.
+/// A reply ends at the first line whose fourth byte is a space, or that is
+/// the code alone (RFC 5321 §4.2.1); a hyphen continues it. Returns the
+/// index just past that line's CRLF, or [`None`] while the reply is still
+/// incomplete. Anything past that index arrived early and, for STARTTLS,
+/// arrived from an attacker.
 fn reply_end(buf: &[u8]) -> Option<usize> {
     let mut start = 0;
 
@@ -198,7 +198,7 @@ fn reply_end(buf: &[u8]) -> Option<usize> {
         let end = start + rel + 1;
         let line = &buf[start..end];
 
-        if line.len() >= 4 && line[3] == b' ' {
+        if matches!(line.get(3..), Some([b' ', ..] | [b'\r', b'\n'])) {
             return Some(end);
         }
 
@@ -249,6 +249,16 @@ mod tests {
         let reply = b"220-server.example.com\r\n220 ready\r\n";
         let remaining = expect_complete_ok(&mut starttls, reply);
         assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn bare_code_success_returns_remaining() {
+        let mut starttls = SmtpStartTls::new();
+        let _ = expect_wants_write(&mut starttls, None);
+        expect_wants_read(&mut starttls);
+
+        let remaining = expect_complete_ok(&mut starttls, b"220\r\nRSET\r\n");
+        assert_eq!(remaining, b"RSET\r\n");
     }
 
     #[test]

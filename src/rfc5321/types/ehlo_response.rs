@@ -8,7 +8,7 @@ use alloc::{borrow::Cow, vec::Vec};
 use bounded_static_derive::ToStatic;
 use chumsky::prelude::*;
 
-use crate::rfc5321::types::{domain::SmtpDomain, text::SmtpText};
+use crate::rfc5321::types::{domain::SmtpDomain, response::SmtpResponse, text::SmtpText};
 
 /// EHLO response containing server capabilities.
 ///
@@ -28,20 +28,10 @@ pub struct SmtpEhloResponse<'a> {
 
 impl SmtpEhloResponse<'_> {
     /// Returns true if `buf` contains a complete EHLO response.
+    ///
+    /// It completes as any response does, see [`SmtpResponse::is_complete`].
     pub fn is_complete(buf: &[u8]) -> bool {
-        if !buf.ends_with(b"\r\n") {
-            return false;
-        }
-
-        let body = &buf[..buf.len() - 2];
-        let line_start = body
-            .iter()
-            .rposition(|&b| b == b'\n')
-            .map(|p| p + 1)
-            .unwrap_or(0);
-
-        let last_line = &body[line_start..];
-        last_line.len() >= 4 && last_line[3] == b' '
+        SmtpResponse::is_complete(buf)
     }
 
     /// Parses an EHLO response from raw bytes.
@@ -115,9 +105,12 @@ pub(crate) mod parsers {
     /// ehlo-ok-rsp    = ( "250" SP Domain [ SP ehlo-greet ] CRLF )
     ///                / ( "250-" Domain [ SP ehlo-greet ] CRLF
     ///                  *( "250-" ehlo-line CRLF )
-    ///                  "250" SP ehlo-line CRLF )
+    ///                  "250" [ SP ehlo-line ] CRLF )
     /// ehlo-line      = ehlo-keyword *( SP ehlo-param )
     /// ```
+    ///
+    /// The last line may be the code alone, which clients must accept (RFC
+    /// 5321 §4.2.1).
     pub(crate) fn ehlo_response<'a>() -> impl Parser<'a, &'a [u8], SmtpEhloResponse<'a>, Extra<'a>>
     {
         just(b"250" as &[u8])
@@ -135,8 +128,7 @@ pub(crate) mod parsers {
             )
             .then(
                 just(b"250" as &[u8])
-                    .then_ignore(sp())
-                    .ignore_then(capability())
+                    .ignore_then(sp().ignore_then(capability()).or_not())
                     .then_ignore(crlf())
                     .or_not(),
             )
@@ -146,7 +138,7 @@ pub(crate) mod parsers {
                 if is_multi {
                     capabilities.extend(cont_caps);
 
-                    if let Some(cap) = final_cap {
+                    if let Some(cap) = final_cap.flatten() {
                         capabilities.push(cap);
                     }
                 }

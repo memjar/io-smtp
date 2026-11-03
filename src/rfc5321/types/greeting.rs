@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 use bounded_static_derive::ToStatic;
 use chumsky::prelude::*;
 
-use crate::rfc5321::types::{domain::SmtpDomain, text::SmtpText};
+use crate::rfc5321::types::{domain::SmtpDomain, response::SmtpResponse, text::SmtpText};
 
 /// Server greeting sent upon connection.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, ToStatic)]
@@ -24,23 +24,10 @@ pub struct SmtpGreeting<'a> {
 impl SmtpGreeting<'_> {
     /// Returns true if `buf` contains a complete greeting.
     ///
-    /// A greeting is complete when the last CRLF-terminated line begins with
-    /// `220 ` (space, not dash). This correctly handles both single-line and
-    /// multi-line greetings.
+    /// A greeting completes as any response does, see
+    /// [`SmtpResponse::is_complete`].
     pub fn is_complete(buf: &[u8]) -> bool {
-        if !buf.ends_with(b"\r\n") {
-            return false;
-        }
-
-        let body = &buf[..buf.len() - 2];
-        let line_start = body
-            .iter()
-            .rposition(|&b| b == b'\n')
-            .map(|p| p + 1)
-            .unwrap_or(0);
-
-        let last_line = &body[line_start..];
-        last_line.len() >= 4 && last_line[3] == b' '
+        SmtpResponse::is_complete(buf)
     }
 
     /// Parses a greeting from raw bytes.
@@ -86,7 +73,7 @@ pub(crate) mod parsers {
     /// Greeting       = ( "220" ( SP / "-" ) Domain [ SP textstring ] CRLF ) /
     ///                  ( "220-" Domain [ SP textstring ] CRLF
     ///                    *( "220-" [ textstring ] CRLF )
-    ///                    "220" SP [ textstring ] CRLF )
+    ///                    "220" [ SP [ textstring ] ] CRLF )
     /// ```
     ///
     /// Only the domain and text from the first line are retained; continuation
@@ -113,10 +100,9 @@ pub(crate) mod parsers {
             .ignore_then(text().or_not())
             .then_ignore(crlf());
 
-        // NOTE: final line: "220 " [text] CRLF
+        // NOTE: final line: "220" [SP [text]] CRLF
         let multi_last = just(b"220" as &[u8])
-            .ignore_then(sp())
-            .ignore_then(text().or_not())
+            .ignore_then(sp().ignore_then(text().or_not()).or_not())
             .then_ignore(crlf());
 
         let multi = multi_first

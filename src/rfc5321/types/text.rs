@@ -46,9 +46,7 @@ impl AsRef<str> for SmtpText<'_> {
 pub(crate) mod parsers {
     //! Chumsky parser for the SMTP text string.
 
-    use core::str::from_utf8;
-
-    use alloc::borrow::Cow;
+    use alloc::string::String;
 
     use chumsky::prelude::*;
 
@@ -60,15 +58,18 @@ pub(crate) mod parsers {
     /// textstring     = 1*(%d09 / %d32-126)
     ///                ; HT, SP, Printable US-ASCII
     /// ```
+    ///
+    /// Bytes from 0x80 are accepted too, decoded as UTF-8 with replacement
+    /// characters, since any text must be acceptable (RFC 5321 §4.2).
+    ///
+    /// Refs: <https://datatracker.ietf.org/doc/html/rfc5321#section-4.2>
     pub(crate) fn text<'a>() -> impl Parser<'a, &'a [u8], SmtpText<'a>, Extra<'a>> + Clone {
         any()
-            .filter(|b| matches!(*b, 0x09 | 0x20..=0x7e))
+            .filter(|b| matches!(*b, 0x09 | 0x20..=0x7e | 0x80..=0xff))
             .repeated()
             .at_least(1)
             .to_slice()
-            .map(from_utf8)
-            .map(Result::unwrap)
-            .map(Cow::from)
+            .map(String::from_utf8_lossy)
             .map(SmtpText)
     }
 }

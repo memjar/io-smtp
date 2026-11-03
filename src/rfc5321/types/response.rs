@@ -23,7 +23,10 @@ impl SmtpResponse<'_> {
     /// Returns true if `buf` contains a complete SMTP response.
     ///
     /// A response is complete when the last CRLF-terminated line has
-    /// `ddd SP` (not `ddd -`).
+    /// `ddd SP` (not `ddd -`), or is the code alone, which clients must
+    /// accept (RFC 5321 §4.2.1).
+    ///
+    /// Refs: <https://datatracker.ietf.org/doc/html/rfc5321#section-4.2.1>
     pub fn is_complete(buf: &[u8]) -> bool {
         if !buf.ends_with(b"\r\n") {
             return false;
@@ -37,7 +40,7 @@ impl SmtpResponse<'_> {
             .unwrap_or(0);
 
         let last_line = &body[line_start..];
-        last_line.len() >= 4 && last_line[3] == b' '
+        last_line.len() == 3 || last_line.get(3) == Some(&b' ')
     }
 
     /// Parses a response from raw bytes.
@@ -99,7 +102,7 @@ pub(crate) mod parsers {
     /// ```abnf
     /// Replies        = *( Reply-line ) Final-Reply
     /// Reply-line     = Reply-code "-" [ textstring ] CRLF
-    /// Final-Reply    = Reply-code SP [ textstring ] CRLF
+    /// Final-Reply    = Reply-code [ SP [ textstring ] ] CRLF
     /// Reply-code     = %x32-35 %x30-35 %x30-39
     /// ```
     pub(crate) fn response<'a>() -> impl Parser<'a, &'a [u8], SmtpResponse<'a>, Extra<'a>> + Clone {
@@ -108,10 +111,10 @@ pub(crate) mod parsers {
             .then_ignore(just(b'-'))
             .then(text_parser().or_not())
             .then_ignore(crlf());
-        // NOTE: final: code SP [text] CRLF
+        // NOTE: final: code [SP [text]] CRLF
         let last = reply_code_parser()
-            .then_ignore(sp())
-            .then(text_parser().or_not())
+            .then(sp().ignore_then(text_parser().or_not()).or_not())
+            .map(|(code, text)| (code, text.flatten()))
             .then_ignore(crlf());
 
         cont.repeated()

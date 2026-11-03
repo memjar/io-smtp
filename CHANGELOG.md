@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed a reply whose last line is the code alone, such as `250\r\n`, never completing (RFC 5321 4.2.1).
+
+- Fixed a reply text holding non-ASCII bytes failing the parse.
+
+  Bytes from 0x80 decode as UTF-8, with replacement characters when invalid.
+
 - Fixed bare CR and bare LF line endings reaching the server in `DATA` (RFC 5321 2.3.8).
 
   `SmtpData` sends every line ending as CRLF and doubles the dot after a bare one too.
