@@ -696,11 +696,11 @@ dependencies = [
 
 [[package]]
 name = "io-sasl"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68c646c1b97cc26d3ffbffac5db3a242f5aa58f77d0cfe4df986df68c926949d"
+checksum = "b7b6d27b84ce81172fd74e7181e07b94d765018564ed44aaec30601d213150dc"
 dependencies = [
- "base64",
+ "base64-codec",
  "hmac",
  "log",
  "pbkdf2",
@@ -711,7 +711,7 @@ dependencies = [
 
 [[package]]
 name = "io-smtp"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "base64-codec",
