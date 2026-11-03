@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `SmtpAuthCapability::available_mechanisms`, the advertised mechanisms this build frames, most preferred first.
+
 - Added a `reply` fuzz target over the reply parsers and the coroutines reading them.
 
 ### Changed

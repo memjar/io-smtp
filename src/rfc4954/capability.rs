@@ -2,6 +2,7 @@
 
 use alloc::vec::Vec;
 
+use io_sasl::mechanism::SaslMechanism;
 use thiserror::Error;
 
 /// EHLO capability keyword for SMTP authentication.
@@ -50,9 +51,61 @@ impl<'a> SmtpAuthCapability<'a> {
     pub fn mechanisms(&self) -> impl Iterator<Item = &str> {
         self.0.iter().copied()
     }
+
+    /// Returns the advertised mechanisms this build frames, most preferred
+    /// first and LOGIN last, dropping the others.
+    pub fn available_mechanisms(&self) -> Vec<SaslMechanism> {
+        let preferred = [
+            #[cfg(feature = "scram")]
+            SaslMechanism::ScramSha256,
+            SaslMechanism::Plain,
+            SaslMechanism::OAuthBearer,
+            SaslMechanism::XOAuth2,
+            SaslMechanism::Anonymous,
+            SaslMechanism::Login,
+        ];
+
+        preferred
+            .into_iter()
+            .filter(|mechanism| self.has(mechanism.as_str()))
+            .collect()
+    }
 }
 
 /// Error returned when parsing an AUTH capability string fails.
 #[derive(Debug, Error)]
 #[error("invalid AUTH capability string")]
 pub struct SmtpAuthCapabilityError;
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
+
+    use io_sasl::mechanism::SaslMechanism;
+
+    use crate::rfc4954::capability::*;
+
+    #[test]
+    fn available_mechanisms_are_ordered_and_framed_only() {
+        let line = "AUTH LOGIN xoauth2 CRAM-MD5 PLAIN SCRAM-SHA-256 OAUTHBEARER GSSAPI";
+        let cap = SmtpAuthCapability::parse(line).unwrap();
+
+        let expected = vec![
+            #[cfg(feature = "scram")]
+            SaslMechanism::ScramSha256,
+            SaslMechanism::Plain,
+            SaslMechanism::OAuthBearer,
+            SaslMechanism::XOAuth2,
+            SaslMechanism::Login,
+        ];
+
+        assert_eq!(cap.available_mechanisms(), expected);
+        assert_eq!(cap.mechanisms().count(), 7);
+    }
+
+    #[test]
+    fn an_empty_auth_line_offers_nothing() {
+        let cap = SmtpAuthCapability::parse("AUTH").unwrap();
+        assert!(cap.available_mechanisms().is_empty());
+    }
+}

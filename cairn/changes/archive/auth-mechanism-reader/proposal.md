@@ -1,7 +1,7 @@
 ---
 cairn: change
 id: auth-mechanism-reader
-status: active
+status: landed
 created: 2026-08-27
 ---
 
